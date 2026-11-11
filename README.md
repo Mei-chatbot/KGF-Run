@@ -16,7 +16,9 @@ Plain HTML/CSS/JS front end + one Vercel serverless function (`api/runners.js`) 
 
 - `POST /api/runners` saves my position and stats and returns everyone's. The app calls it every 5 seconds, so one request does both jobs.
 - `GET /api/runners` is used by people who tap "Just watching".
-- Runners not heard from for 6 hours are removed automatically, so each Sunday starts clean.
+- Runners who are ready or running disappear 5 minutes after their last update (app closed, phone off). Finished runners stay for 3 hours.
+- Runners can tap **Stop sharing my location** to remove themselves and stay on the map as a viewer.
+- To clear everyone: add an `ADMIN_KEY` environment variable in Vercel (any secret text), redeploy, then open `/admin.html` and enter it.
 - Distance is summed from GPS fixes on the phone. Fixes worse than 35 m accuracy, tiny jitter moves and impossible jumps (over 43 km/h) are ignored.
 - State is kept in `localStorage`, so a reload or accidental tab close resumes the same run.
 

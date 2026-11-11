@@ -6,6 +6,7 @@
   const STALE_AFTER_MS = 30000;  // fade a runner's marker if we haven't heard from them
   const LS_ME = 'kgf.me';
   const LS_RUN = 'kgf.run';
+  const LS_NAME = 'kgf.name';
   const PALETTE = [
     ['#E53935', '#fff'], ['#1E6FEB', '#fff'], ['#1FA45B', '#fff'], ['#F7B500', '#000'],
     ['#8E44AD', '#fff'], ['#FF5FA2', '#000'], ['#00A896', '#fff'], ['#FF7A00', '#000'],
@@ -37,7 +38,7 @@
     join: $('join'), app: $('app'), name: $('name'), joinBtn: $('joinBtn'), watchBtn: $('watchBtn'),
     countNum: $('countNum'), countPill: $('countPill'), alert: $('alert'),
     sTime: $('sTime'), sDist: $('sDist'), sPace: $('sPace'), stats: $('stats'),
-    statusLine: $('statusLine'), runBtn: $('runBtn'),
+    statusLine: $('statusLine'), runBtn: $('runBtn'), stopBtn: $('stopBtn'),
     listToggle: $('listToggle'), list: $('list'),
     summary: $('summary'), confirm: $('confirm'),
   };
@@ -248,6 +249,7 @@
     const joined = !!state.me;
     el.stats.hidden = !joined;
     el.statusLine.hidden = !joined;
+    el.stopBtn.hidden = !joined;
     el.runBtn.classList.remove('stop');
     const label = el.runBtn.querySelector('span');
     if (!joined) { label.textContent = 'Join the run'; return; }
@@ -441,7 +443,7 @@
     field.classList.remove('invalid');
     state.me = { id: uuid(), name };
     state.run = { status: 'ready', startedAt: null, endedAt: null, distance: 0, anchor: null };
-    save(LS_ME, state.me); saveRun();
+    save(LS_ME, state.me); save(LS_NAME, name); saveRun();
     enterApp();
   }
 
@@ -450,18 +452,37 @@
     enterApp();
   }
 
-  function leave() {
-    if (state.me) {
-      fetch('/api/runners?id=' + encodeURIComponent(state.me.id), { method: 'DELETE', keepalive: true }).catch(() => {});
-    }
-    stopGeo(); stopLoops(); unlockScreen();
+  // Remove my record from the server. Waits for any in-flight update first so it can't re-add me.
+  async function removeFromServer(id) {
+    for (let i = 0; i < 30 && state.inFlight; i++) await new Promise((r) => setTimeout(r, 100));
+    try { await fetch('/api/runners?id=' + encodeURIComponent(id), { method: 'DELETE', keepalive: true }); } catch (e) { /* offline: server drops me after 5 min */ }
+  }
+
+  function resetMe() {
+    stopGeo(); unlockScreen();
     drop(LS_ME); drop(LS_RUN);
-    state.me = null; state.pos = null; state.runners = []; state.hasPosted = false;
+    state.me = null; state.pos = null; state.hasPosted = false; state.needsFinalSync = false;
     state.run = { status: 'ready', startedAt: null, endedAt: null, distance: 0, anchor: null };
-    state.autoFit = true; state.firstFitDone = false;
-    markers.forEach((m) => map && map.removeLayer(m.marker)); markers.clear();
     hideAlert();
+  }
+
+  function leave() {
+    const id = state.me && state.me.id;
+    stopLoops();
+    resetMe();
+    state.runners = []; state.autoFit = true; state.firstFitDone = false;
+    markers.forEach((m) => map && map.removeLayer(m.marker)); markers.clear();
     el.app.hidden = true; el.join.hidden = false;
+    if (id) removeFromServer(id);
+  }
+
+  // Stop sharing but stay on the map as a viewer.
+  function stopSharing() {
+    const id = state.me && state.me.id;
+    resetMe();
+    if (id) state.runners = state.runners.filter((r) => r.id !== id);
+    renderControls(); renderStats(); render();
+    if (id) removeFromServer(id);
   }
 
   // ---------- Events ----------
@@ -480,15 +501,31 @@
 
   $('sumClose').addEventListener('click', () => { el.summary.hidden = true; });
 
-  $('leaveBtn').addEventListener('click', () => {
-    if (!state.me) { leave(); return; }
-    $('confirmText').textContent = state.run.status === 'running'
-      ? 'Your run is still in progress. Leaving removes you from everyone\'s map and clears your stats.'
-      : 'Your marker will disappear from everyone\'s map.';
+  let confirmAction = 'leave';
+  function askConfirm(action) {
+    confirmAction = action;
+    const running = state.run.status === 'running';
+    if (action === 'stop') {
+      $('confirmTitle').textContent = 'Stop sharing?';
+      $('confirmText').textContent = 'Your marker disappears from everyone\'s map and your location is no longer shared. ' +
+        (running ? 'Your current run stats will be cleared. ' : '') + 'You can join again any time.';
+      $('confirmYes').querySelector('span').textContent = 'Stop sharing';
+    } else {
+      $('confirmTitle').textContent = 'Leave the run?';
+      $('confirmText').textContent = running
+        ? 'Your run is still in progress. Leaving removes you from everyone\'s map and clears your stats.'
+        : 'Your marker will disappear from everyone\'s map.';
+      $('confirmYes').querySelector('span').textContent = 'Leave';
+    }
     el.confirm.hidden = false;
-  });
+  }
+  $('leaveBtn').addEventListener('click', () => { if (!state.me) { leave(); return; } askConfirm('leave'); });
+  el.stopBtn.addEventListener('click', () => askConfirm('stop'));
   $('confirmNo').addEventListener('click', () => { el.confirm.hidden = true; });
-  $('confirmYes').addEventListener('click', () => { el.confirm.hidden = true; leave(); });
+  $('confirmYes').addEventListener('click', () => {
+    el.confirm.hidden = true;
+    if (confirmAction === 'stop') stopSharing(); else leave();
+  });
 
   $('fitBtn').addEventListener('click', () => { state.autoFit = true; fitAll(true); });
   $('meBtn').addEventListener('click', () => {
@@ -515,6 +552,8 @@
 
   // ---------- Boot ----------
   function boot() {
+    const savedName = load(LS_NAME);
+    if (savedName) el.name.value = savedName;
     const saved = load(LS_ME);
     if (saved && saved.id && saved.name) {
       state.me = saved;

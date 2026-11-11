@@ -72,6 +72,7 @@
       </div>
       <p class="status-line" id="statusLine">Getting your location…</p>
       <button id="runBtn" class="btn btn-primary" type="button"><span>Start run</span></button>
+      <button id="stopBtn" class="link-btn stop-share" type="button">Stop sharing my location</button>
 
       <button id="listToggle" class="list-head" type="button" aria-expanded="false" aria-controls="list">
         <span>Runners</span>
@@ -99,10 +100,10 @@
   <!-- Leave confirmation -->
   <div id="confirm" class="modal" hidden>
     <div class="modal-card">
-      <h2>Leave the run?</h2>
+      <h2 id="confirmTitle">Leave the run?</h2>
       <p class="note" id="confirmText">Your marker will disappear from everyone's map.</p>
       <div class="btn-row">
-        <button id="confirmNo" class="btn btn-ghost" type="button"><span>Stay</span></button>
+        <button id="confirmNo" class="btn btn-ghost" type="button"><span>Keep sharing</span></button>
         <button id="confirmYes" class="btn btn-primary" type="button"><span>Leave</span></button>
       </div>
     </div>
