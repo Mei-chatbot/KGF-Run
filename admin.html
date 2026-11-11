@@ -7,39 +7,79 @@
   <meta name="robots" content="noindex">
   <style>
     body{margin:0;min-height:100vh;display:grid;place-items:center;background:#000;color:#F6F2E7;font:16px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
-    main{width:100%;max-width:380px;padding:24px}
+    main{width:100%;max-width:400px;padding:24px}
     img{width:200px;display:block;margin-bottom:22px}
     h1{margin:0 0 6px;font:italic 800 36px/1 'Arial Narrow',Impact,sans-serif}
-    p{color:#A29C8B;margin:0 0 20px}
-    input{width:100%;height:54px;padding:0 14px;box-sizing:border-box;background:#131313;color:#F6F2E7;border:2px solid #2a2a2a;border-radius:4px;font-size:18px;margin-bottom:14px}
-    input:focus{outline:none;border-color:#F7B500}
-    button{width:100%;height:54px;border:0;border-radius:3px;background:#ff5a4d;color:#000;font:italic 800 22px 'Arial Narrow',Impact,sans-serif;cursor:pointer}
-    #msg{margin-top:16px;min-height:22px}
+    h2{margin:30px 0 4px;font:italic 800 24px/1 'Arial Narrow',Impact,sans-serif;color:#F7B500}
+    p{color:#A29C8B;margin:0 0 14px}
+    input,select{width:100%;height:54px;padding:0 14px;box-sizing:border-box;background:#131313;color:#F6F2E7;border:2px solid #2a2a2a;border-radius:4px;font-size:18px;margin-bottom:12px}
+    input:focus,select:focus{outline:none;border-color:#F7B500}
+    button{width:100%;height:54px;border:0;border-radius:3px;background:#F7B500;color:#000;font:italic 800 22px 'Arial Narrow',Impact,sans-serif;cursor:pointer}
+    button.danger{background:#ff5a4d}
+    #msg{margin-top:18px;min-height:22px}
     .ok{color:#3ddc84}.err{color:#ff5a4d}
   </style>
 </head>
 <body>
 <main>
   <img src="/icons/logo-600.png" alt="KGF">
-  <h1>Clear the map</h1>
-  <p>Removes every runner from the live map. People with the app open will reappear on their next update.</p>
+  <h1>Admin</h1>
+  <p>Enter your admin key once, then use the actions below.</p>
   <input id="key" type="password" placeholder="Admin key" autocomplete="off">
-  <button id="go" type="button">Clear all runners</button>
+
+  <h2>Target distance</h2>
+  <p>The Time leaderboard ranks who covered this distance fastest.</p>
+  <input id="target" type="number" inputmode="decimal" min="0.5" max="200" step="0.5" placeholder="Kilometres, e.g. 10">
+  <button id="saveTarget" type="button">Save target</button>
+
+  <h2>Delete a day</h2>
+  <p>Removes that day's results and tracks from the database. This cannot be undone.</p>
+  <select id="day"></select>
+  <button id="clearDay" class="danger" type="button">Delete this day's data</button>
+
   <div id="msg"></div>
 </main>
 <script>
-  const msg = document.getElementById('msg');
-  document.getElementById('go').addEventListener('click', async () => {
-    const key = document.getElementById('key').value;
-    if (!key) { msg.className = 'err'; msg.textContent = 'Enter the admin key.'; return; }
-    if (!confirm('Remove all runners from the map?')) return;
+  const $ = (id) => document.getElementById(id);
+  const msg = (text, ok) => { $('msg').className = ok ? 'ok' : 'err'; $('msg').textContent = text; };
+
+  async function call(body) {
+    const key = $('key').value;
+    if (!key) { msg('Enter the admin key first.'); return null; }
     try {
-      const r = await fetch('/api/runners?all=1', { method: 'DELETE', headers: { 'x-admin-key': key } });
+      const r = await fetch('/api/admin', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-admin-key': key }, body: JSON.stringify(body) });
       const d = await r.json();
-      msg.className = r.ok ? 'ok' : 'err';
-      msg.textContent = r.ok ? 'Done. The map is clear.' : (d.error || 'Failed.');
-    } catch (e) { msg.className = 'err'; msg.textContent = 'No connection.'; }
+      if (!r.ok) { msg(d.error || 'Failed.'); return null; }
+      return d;
+    } catch (e) { msg('No connection.'); return null; }
+  }
+
+  async function loadDays() {
+    try {
+      const live = await (await fetch('/api/runners', { cache: 'no-store' })).json();
+      const list = await (await fetch('/api/day', { cache: 'no-store' })).json();
+      if (live.targetKm) $('target').placeholder = 'Now ' + live.targetKm + ' km';
+      const days = Array.from(new Set([live.day].concat(list.days || []))).filter(Boolean).sort().reverse();
+      $('day').innerHTML = days.map((d) => '<option value="' + d + '">' + d + (d === live.day ? ' (today)' : '') + '</option>').join('');
+    } catch (e) { /* page still works without the list */ }
+  }
+
+  $('saveTarget').addEventListener('click', async () => {
+    const km = Number($('target').value);
+    if (!km) { msg('Enter a distance in km.'); return; }
+    const d = await call({ action: 'setTarget', targetKm: km });
+    if (d) { msg('Target saved: ' + d.targetKm + ' km.', true); $('target').value = ''; loadDays(); }
   });
+
+  $('clearDay').addEventListener('click', async () => {
+    const date = $('day').value;
+    if (!date) return;
+    if (!confirm('Delete all results and tracks for ' + date + '?')) return;
+    const d = await call({ action: 'clearDay', date });
+    if (d) { msg('Deleted ' + date + ' (' + d.runs + ' runs).', true); loadDays(); }
+  });
+
+  loadDays();
 </script>
 </body>
 </html>

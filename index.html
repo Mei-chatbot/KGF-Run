@@ -44,6 +44,9 @@
       <img src="/icons/logo-600.png" alt="KGF" class="top-logo">
       <div class="top-right">
         <span class="pill" id="countPill"><i class="dot"></i><b id="countNum">0</b> on the map</span>
+        <button id="boardBtn" class="icon-btn" type="button" aria-label="Leaderboard">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4h8v5a4 4 0 0 1-8 0V4z"/><path d="M8 6H5a2 2 0 0 0 0 4h3M16 6h3a2 2 0 0 1 0 4h-3"/><path d="M12 13v4M8 20h8M10 17h4"/></svg>
+        </button>
         <button id="leaveBtn" class="icon-btn" type="button" aria-label="Leave the run">
           <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h4"/><path d="M16 8l4 4-4 4"/><path d="M20 12H9"/></svg>
         </button>
@@ -57,6 +60,9 @@
       <div class="map-tools">
         <button id="meBtn" class="tool" type="button" aria-label="Centre on me">
           <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
+        </button>
+        <button id="trailBtn" class="tool" type="button" aria-label="Show everyone's trails" aria-pressed="false">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="18" r="2"/><circle cx="18" cy="6" r="2"/><path d="M8 18h6a3 3 0 0 0 0-6h-4a3 3 0 0 1 0-6h6"/></svg>
         </button>
         <button id="fitBtn" class="tool" type="button" aria-label="Show everyone">
           <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
@@ -93,9 +99,55 @@
         <div><dt>Time</dt><dd id="sumTime">-</dd></div>
         <div><dt>Avg pace</dt><dd id="sumPace">-</dd></div>
       </dl>
-      <button id="sumClose" class="btn btn-primary" type="button"><span>Done</span></button>
+      <div class="btn-row sum-actions">
+        <button id="sumBoard" class="btn btn-ghost" type="button"><span>Leaderboard</span></button>
+        <button id="sumClose" class="btn btn-primary" type="button"><span>Done</span></button>
+      </div>
     </div>
   </div>
+
+  <!-- Leaderboard -->
+  <section id="board" class="overlay" hidden aria-label="Leaderboard">
+    <header class="ov-head">
+      <h2>Leaderboard</h2>
+      <button id="boardClose" class="icon-btn" type="button" aria-label="Close leaderboard">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </header>
+    <div class="ov-controls">
+      <select id="boardDay" aria-label="Choose a day"></select>
+      <div class="tabs" id="boardTabs" role="tablist">
+        <button class="tab" role="tab" data-sort="distance" aria-selected="true" type="button"><span>Distance</span></button>
+        <button class="tab" role="tab" data-sort="time" aria-selected="false" type="button"><span>Time</span></button>
+        <button class="tab" role="tab" data-sort="speed" aria-selected="false" type="button"><span>Speed</span></button>
+      </div>
+      <p id="boardNote" class="board-note"></p>
+    </div>
+    <ol id="boardList" class="board-list"></ol>
+    <div class="ov-foot">
+      <button id="allTracksBtn" class="btn btn-primary" type="button"><span>See all tracks on map</span></button>
+    </div>
+  </section>
+
+  <!-- All tracks map -->
+  <section id="tracksView" class="overlay tracks" hidden aria-label="All tracks">
+    <header class="ov-head">
+      <h2>All tracks</h2>
+      <button id="tracksClose" class="icon-btn" type="button" aria-label="Close tracks">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </header>
+    <div class="tmap-wrap">
+      <div id="tmap"></div>
+      <div class="map-tools">
+        <button id="tfit" class="tool" type="button" aria-label="Fit all tracks">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+        </button>
+      </div>
+      <p id="tmsg" class="tmsg" hidden></p>
+    </div>
+    <ul id="tlegend" class="list open tlegend"></ul>
+  </section>
 
   <!-- Leave confirmation -->
   <div id="confirm" class="modal" hidden>
