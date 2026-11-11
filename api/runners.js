@@ -2,6 +2,7 @@
 // GET    /api/runners            -> { now, runners: [...] }
 // POST   /api/runners            -> upsert my position/stats, returns the same payload as GET
 // DELETE /api/runners?id=<id>    -> leave the run
+// DELETE /api/runners?all=1      -> admin only: clear everyone (header x-admin-key = ADMIN_KEY env var)
 //
 // Storage: one Redis hash (field = runner id) on Upstash Redis (free tier).
 // Env vars (either naming works, Vercel's Upstash integration sets the KV_* ones):
@@ -9,7 +10,9 @@
 //   KV_REST_API_URL        / KV_REST_API_TOKEN
 
 const KEY = 'kgf:runners';
-const STALE_MS = 6 * 60 * 60 * 1000; // drop runners not heard from for 6 hours
+const LIVE_MS = 5 * 60 * 1000;            // ready/running runners vanish 5 min after their last update (closed app, lost phone, etc.)
+const FINISHED_MS = 3 * 60 * 60 * 1000;  // finished runners stay on the map for 3 hours
+const isLive = (r, now) => now - r.updatedAt < (r.status === 'finished' ? FINISHED_MS : LIVE_MS);
 const HASH_TTL_S = 24 * 60 * 60;
 const PALETTE_SIZE = 12;
 const STATUSES = ['ready', 'running', 'finished'];
@@ -78,8 +81,8 @@ module.exports = async (req, res) => {
     if (req.method === 'GET') {
       const [flat] = await redis([['HGETALL', KEY]]);
       const all = parseHash(flat);
-      const fresh = all.filter((r) => now - r.updatedAt < STALE_MS);
-      const stale = all.filter((r) => now - r.updatedAt >= STALE_MS).map((r) => r.id);
+      const fresh = all.filter((r) => isLive(r, now));
+      const stale = all.filter((r) => !isLive(r, now)).map((r) => r.id);
       if (stale.length) await redis([['HDEL', KEY, ...stale]]);
       return res.status(200).json({ now, runners: fresh });
     }
@@ -92,8 +95,8 @@ module.exports = async (req, res) => {
 
       const [flat] = await redis([['HGETALL', KEY]]);
       const all = parseHash(flat);
-      const fresh = all.filter((r) => now - r.updatedAt < STALE_MS);
-      const stale = all.filter((r) => now - r.updatedAt >= STALE_MS).map((r) => r.id);
+      const fresh = all.filter((r) => isLive(r, now));
+      const stale = all.filter((r) => !isLive(r, now)).map((r) => r.id);
 
       const existing = fresh.find((r) => r.id === rec.id);
       if (existing) {
@@ -116,6 +119,16 @@ module.exports = async (req, res) => {
     }
 
     if (req.method === 'DELETE') {
+      // Admin: wipe everyone. Needs ADMIN_KEY set in Vercel and sent as the x-admin-key header.
+      if (req.query && req.query.all) {
+        const adminKey = process.env.ADMIN_KEY;
+        const sent = String(req.headers['x-admin-key'] || '');
+        if (!adminKey) return res.status(403).json({ error: 'ADMIN_KEY is not set in Vercel environment variables.' });
+        const a = Buffer.from(adminKey), b = Buffer.from(sent);
+        if (a.length !== b.length || !require('crypto').timingSafeEqual(a, b)) return res.status(401).json({ error: 'Wrong admin key.' });
+        await redis([['DEL', KEY]]);
+        return res.status(200).json({ ok: true, cleared: true });
+      }
       const id = String((req.query && req.query.id) || '');
       if (!/^[a-zA-Z0-9-]{8,64}$/.test(id)) return res.status(400).json({ error: 'Invalid id' });
       await redis([['HDEL', KEY, id]]);
