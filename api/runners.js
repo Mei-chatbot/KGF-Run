@@ -1,137 +1,127 @@
-// KGF Run Tracker – shared runner state.
-// GET    /api/runners            -> { now, runners: [...] }
-// POST   /api/runners            -> upsert my position/stats, returns the same payload as GET
-// DELETE /api/runners?id=<id>    -> leave the run
-// DELETE /api/runners?all=1      -> admin only: clear everyone (header x-admin-key = ADMIN_KEY env var)
-//
-// Storage: one Redis hash (field = runner id) on Upstash Redis (free tier).
-// Env vars (either naming works, Vercel's Upstash integration sets the KV_* ones):
-//   UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN
-//   KV_REST_API_URL        / KV_REST_API_TOKEN
+// KGF Run Tracker: live state for today's run.
+//   GET    /api/runners         -> { now, day, targetKm, runners }
+//   POST   /api/runners         -> save my position, stats and new track points; returns the same payload + myN
+//   DELETE /api/runners?id=<id> -> stop sharing (never-started runners are removed, started runs are kept as results)
+const L = require('./_lib');
+const { K, redis, parseHash, dayKeyOf, onMap, getTargetKm, ID_RE, PALETTE_SIZE } = L;
 
-const KEY = 'kgf:runners';
-const LIVE_MS = 5 * 60 * 1000;            // ready/running runners vanish 5 min after their last update (closed app, lost phone, etc.)
-const FINISHED_MS = 3 * 60 * 60 * 1000;  // finished runners stay on the map for 3 hours
-const isLive = (r, now) => now - r.updatedAt < (r.status === 'finished' ? FINISHED_MS : LIVE_MS);
-const HASH_TTL_S = 24 * 60 * 60;
-const PALETTE_SIZE = 12;
 const STATUSES = ['ready', 'running', 'finished'];
-
-function creds() {
-  const url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
-  if (!url || !token) throw new Error('Redis is not configured. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN.');
-  return { url: url.replace(/\/$/, ''), token };
-}
-
-async function redis(commands) {
-  const { url, token } = creds();
-  const r = await fetch(url + '/pipeline', {
-    method: 'POST',
-    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
-    body: JSON.stringify(commands),
-  });
-  if (!r.ok) throw new Error('Redis HTTP ' + r.status);
-  const out = await r.json();
-  return out.map((o) => {
-    if (o.error) throw new Error('Redis: ' + o.error);
-    return o.result;
-  });
-}
-
-function parseHash(flat) {
-  const list = [];
-  for (let i = 0; i < (flat || []).length; i += 2) {
-    try { list.push(JSON.parse(flat[i + 1])); } catch (e) { /* skip corrupt entry */ }
-  }
-  return list;
-}
+const MAX_PTS = 400;
 
 const num = (v, min, max) => {
   const n = Number(v);
   return Number.isFinite(n) && n >= min && n <= max ? n : null;
 };
 
+function sanitizePoint(p) {
+  if (!Array.isArray(p) || p.length !== 4) return null;
+  const a = num(p[0], -9000000, 9000000), b = num(p[1], -18000000, 18000000);
+  const t = num(p[2], 0, 172800), d = num(p[3], 0, 500000);
+  if (a === null || b === null || t === null || d === null) return null;
+  return [Math.round(a), Math.round(b), Math.round(t), Math.round(d)];
+}
+
 function sanitize(body) {
   const id = String(body.id || '');
-  if (!/^[a-zA-Z0-9-]{8,64}$/.test(id)) return { error: 'Invalid id' };
+  if (!ID_RE.test(id)) return { error: 'Invalid id' };
   const name = String(body.name || '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 24);
   if (!name) return { error: 'Name is required' };
-  const lat = num(body.lat, -90, 90);
-  const lng = num(body.lng, -180, 180);
+  const lat = num(body.lat, -90, 90), lng = num(body.lng, -180, 180);
   if (lat === null || lng === null) return { error: 'Invalid position' };
-  const status = STATUSES.includes(body.status) ? body.status : 'ready';
+  const runId = body.runId ? String(body.runId) : null;
+  if (runId && !ID_RE.test(runId)) return { error: 'Invalid runId' };
+  const pts = (Array.isArray(body.pts) ? body.pts.slice(0, MAX_PTS) : []).map(sanitizePoint).filter(Boolean);
   return {
     rec: {
       id, name, lat, lng,
       acc: num(body.acc, 0, 100000) ?? 0,
-      status,
+      status: STATUSES.includes(body.status) ? body.status : 'ready',
       distance: num(body.distance, 0, 500000) ?? 0, // metres
       startedAt: num(body.startedAt, 0, 4e12),
       endedAt: num(body.endedAt, 0, 4e12),
+      reachedMs: num(body.reachedMs, 0, 86400000),   // time taken to cover the target distance
+      runId,
     },
+    pts,
+    from: num(body.from, 0, 1e7) ?? 0,
   };
 }
+
+const visibleRecords = (all, now) => all.filter((r) => r.status !== 'ready' || onMap(r, now));
 
 module.exports = async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   try {
     const now = Date.now();
+    const day = dayKeyOf(now);
 
     if (req.method === 'GET') {
-      const [flat] = await redis([['HGETALL', KEY]]);
+      const [flat] = await redis([['HGETALL', K.day(day)]]);
       const all = parseHash(flat);
-      const fresh = all.filter((r) => isLive(r, now));
-      const stale = all.filter((r) => !isLive(r, now)).map((r) => r.id);
-      if (stale.length) await redis([['HDEL', KEY, ...stale]]);
-      return res.status(200).json({ now, runners: fresh });
+      const stale = all.filter((r) => r.status === 'ready' && !onMap(r, now)).map((r) => r.id); // never started, long gone
+      if (stale.length) await redis([['HDEL', K.day(day), ...stale]]);
+      return res.status(200).json({ now, day, targetKm: await getTargetKm(), runners: visibleRecords(all, now) });
     }
 
     if (req.method === 'POST') {
       let body = req.body;
       if (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { body = {}; } }
-      const { rec, error } = sanitize(body || {});
+      const { rec, pts, from, error } = sanitize(body || {});
       if (error) return res.status(400).json({ error });
 
-      const [flat] = await redis([['HGETALL', KEY]]);
+      const [flat] = await redis([['HGETALL', K.day(day)]]);
       const all = parseHash(flat);
-      const fresh = all.filter((r) => isLive(r, now));
-      const stale = all.filter((r) => !isLive(r, now)).map((r) => r.id);
+      const existing = all.find((r) => r.id === rec.id);
 
-      const existing = fresh.find((r) => r.id === rec.id);
-      if (existing) {
-        rec.color = existing.color;
-      } else {
-        const used = new Set(fresh.map((r) => r.color));
+      // colour: keep mine, otherwise the first one nobody on the map is using
+      if (existing) rec.color = existing.color;
+      else {
+        const used = new Set(all.filter((r) => onMap(r, now)).map((r) => r.color));
         let c = 0;
         while (used.has(c) && c < PALETTE_SIZE) c++;
-        rec.color = c < PALETTE_SIZE ? c : fresh.length % PALETTE_SIZE;
+        rec.color = c < PALETTE_SIZE ? c : all.length % PALETTE_SIZE;
       }
-      rec.updatedAt = now;
 
-      const cmds = [['HSET', KEY, rec.id, JSON.stringify(rec)]];
-      if (!existing) cmds.push(['EXPIRE', KEY, HASH_TTL_S]); // TTL survives updates; refresh it whenever someone new joins
-      if (stale.length) cmds.push(['HDEL', KEY, ...stale]);
+      // how many track points are already stored for this run?
+      let n = 0;
+      if (rec.runId) {
+        if (existing && existing.runId === rec.runId) n = existing.n || 0;
+        else { const [len] = await redis([['LLEN', K.track(rec.runId)]]); n = len || 0; }
+      }
+      // pts start at index `from`; skip any we already have (retries), ignore if there is a gap (client resends from myN)
+      const append = rec.runId && pts.length && from <= n ? pts.slice(n - from) : [];
+      rec.n = n + append.length;
+      rec.updatedAt = now;
+      rec.date = day;
+      rec.hidden = false;
+
+      const cmds = [['HSET', K.day(day), rec.id, JSON.stringify(rec)]];
+      if (append.length) cmds.push(['RPUSH', K.track(rec.runId), ...append.map((p) => JSON.stringify(p))]);
+      if (!existing) cmds.push(['SADD', K.days, day]);
+      const stale = all.filter((r) => r.status === 'ready' && r.id !== rec.id && !onMap(r, now)).map((r) => r.id);
+      if (stale.length) cmds.push(['HDEL', K.day(day), ...stale]);
       await redis(cmds);
 
-      const runners = fresh.filter((r) => r.id !== rec.id).concat(rec);
-      return res.status(200).json({ now, runners });
+      const runners = visibleRecords(all.filter((r) => r.id !== rec.id && !stale.includes(r.id)), now).concat(rec);
+      return res.status(200).json({ now, day, targetKm: await getTargetKm(), runners, myN: rec.n });
     }
 
     if (req.method === 'DELETE') {
-      // Admin: wipe everyone. Needs ADMIN_KEY set in Vercel and sent as the x-admin-key header.
-      if (req.query && req.query.all) {
-        const adminKey = process.env.ADMIN_KEY;
-        const sent = String(req.headers['x-admin-key'] || '');
-        if (!adminKey) return res.status(403).json({ error: 'ADMIN_KEY is not set in Vercel environment variables.' });
-        const a = Buffer.from(adminKey), b = Buffer.from(sent);
-        if (a.length !== b.length || !require('crypto').timingSafeEqual(a, b)) return res.status(401).json({ error: 'Wrong admin key.' });
-        await redis([['DEL', KEY]]);
-        return res.status(200).json({ ok: true, cleared: true });
-      }
       const id = String((req.query && req.query.id) || '');
-      if (!/^[a-zA-Z0-9-]{8,64}$/.test(id)) return res.status(400).json({ error: 'Invalid id' });
-      await redis([['HDEL', KEY, id]]);
+      if (!ID_RE.test(id)) return res.status(400).json({ error: 'Invalid id' });
+      const [raw] = await redis([['HGET', K.day(day), id]]);
+      let rec = null;
+      try { rec = raw ? JSON.parse(raw) : null; } catch (e) { rec = null; }
+      if (!rec) return res.status(200).json({ ok: true });
+      if (rec.status === 'ready' || !rec.startedAt) {
+        await redis([['HDEL', K.day(day), id]]);
+      } else {
+        // keep the result and the track, just take the runner off the live map
+        rec.hidden = true;
+        if (rec.status === 'running') { rec.status = 'stopped'; rec.endedAt = now; }
+        rec.updatedAt = now;
+        await redis([['HSET', K.day(day), id, JSON.stringify(rec)]]);
+      }
       return res.status(200).json({ ok: true });
     }
 
