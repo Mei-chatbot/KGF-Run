@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>KGF Sunday Run</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#000000">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="KGF Run">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" type="image/png" href="/icons/favicon.png">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,600;0,700;1,700;1,800&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+  <!-- 1. Join screen -->
+  <main id="join" class="screen">
+    <div class="join-inner">
+      <img class="join-logo" src="/icons/logo-600.png" alt="KGF" width="600" height="159">
+      <h1>Sunday run</h1>
+      <p class="lede">Everyone on one map, refreshed every 5 seconds. Nobody gets left behind.</p>
+
+      <div class="field">
+        <label for="name">Your name</label>
+        <input id="name" type="text" maxlength="24" autocomplete="given-name" autocapitalize="words" enterkeyhint="go" placeholder="e.g. Arun">
+      </div>
+      <button id="joinBtn" class="btn btn-primary" type="button"><span>Join the run</span></button>
+      <button id="watchBtn" class="link-btn" type="button">Just watching, no location sharing</button>
+      <p id="joinNote" class="note">Your phone will ask to share its location. Keep this screen open while you run.</p>
+    </div>
+  </main>
+
+  <!-- 2. Map screen -->
+  <div id="app" class="screen" hidden>
+    <header class="topbar">
+      <img src="/icons/logo-600.png" alt="KGF" class="top-logo">
+      <div class="top-right">
+        <span class="pill" id="countPill"><i class="dot"></i><b id="countNum">0</b> on the map</span>
+        <button id="leaveBtn" class="icon-btn" type="button" aria-label="Leave the run">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h4"/><path d="M16 8l4 4-4 4"/><path d="M20 12H9"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <div id="alert" class="alert" hidden></div>
+
+    <section class="map-wrap">
+      <div id="map" aria-label="Live map of runners"></div>
+      <div class="map-tools">
+        <button id="meBtn" class="tool" type="button" aria-label="Centre on me">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
+        </button>
+        <button id="fitBtn" class="tool" type="button" aria-label="Show everyone">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+        </button>
+      </div>
+    </section>
+
+    <section class="sheet" id="sheet">
+      <div class="stats" id="stats">
+        <div class="stat"><span class="stat-val" id="sTime">0:00</span><span class="stat-lbl">Time</span></div>
+        <div class="stat"><span class="stat-val"><span id="sDist">0.00</span><small>km</small></span><span class="stat-lbl">Distance</span></div>
+        <div class="stat"><span class="stat-val" id="sPace">--:--</span><span class="stat-lbl">Pace /km</span></div>
+      </div>
+      <p class="status-line" id="statusLine">Getting your location…</p>
+      <button id="runBtn" class="btn btn-primary" type="button"><span>Start run</span></button>
+
+      <button id="listToggle" class="list-head" type="button" aria-expanded="false" aria-controls="list">
+        <span>Runners</span>
+        <svg class="chev" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6-6 6 6"/></svg>
+      </button>
+      <ul id="list" class="list"></ul>
+    </section>
+  </div>
+
+  <!-- 3. Finish summary -->
+  <div id="summary" class="modal" hidden>
+    <div class="modal-card">
+      <h2>Run complete</h2>
+      <div class="sum-big"><span id="sumDist">0.00</span><small>km</small></div>
+      <dl class="sum-grid">
+        <div><dt>Started</dt><dd id="sumStart">-</dd></div>
+        <div><dt>Finished</dt><dd id="sumEnd">-</dd></div>
+        <div><dt>Time</dt><dd id="sumTime">-</dd></div>
+        <div><dt>Avg pace</dt><dd id="sumPace">-</dd></div>
+      </dl>
+      <button id="sumClose" class="btn btn-primary" type="button"><span>Done</span></button>
+    </div>
+  </div>
+
+  <!-- Leave confirmation -->
+  <div id="confirm" class="modal" hidden>
+    <div class="modal-card">
+      <h2>Leave the run?</h2>
+      <p class="note" id="confirmText">Your marker will disappear from everyone's map.</p>
+      <div class="btn-row">
+        <button id="confirmNo" class="btn btn-ghost" type="button"><span>Stay</span></button>
+        <button id="confirmYes" class="btn btn-primary" type="button"><span>Leave</span></button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
